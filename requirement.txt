@@ -1,0 +1,4 @@
+opacus==1.4.1
+torch==2.3.0a0+gitae01701
+scikit-learn==1.4.2
+numpy==1.20.3
