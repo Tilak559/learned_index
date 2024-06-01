@@ -1,11 +1,11 @@
-from opacus import PrivacyEngine
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
-import numpy as np
-from sklearn.model_selection import train_test_split
-import torch.optim as optim
-from torch.optim.lr_scheduler import OneCycleLR
+from opacus import PrivacyEngine 
+import torch 
+import torch.nn as nn 
+from torch.utils.data import DataLoader, Dataset 
+import numpy as np 
+from sklearn.model_selection import train_test_split 
+import torch.optim as optim 
+from torch.optim.lr_scheduler import OneCycleLR 
 import time
 import os
 
@@ -62,17 +62,11 @@ def create_model(config, device):
     model = replace_batchnorm_with_groupnorm(model)  # Replacing BatchNorm with GroupNorm
     return model.to(device)
 
-
-
-
-
 def train_model(model, dataloader, device, validation_loader, epochs=50, privacy=True, lr=0.0005, max_lr=0.005, epsilon=None, delta=1e-5, accumulation_steps=4):
 
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)  
     scheduler = OneCycleLR(optimizer, max_lr=0.01, steps_per_epoch=len(dataloader)//accumulation_steps, epochs=epochs)
-    
-
 
     if privacy:
         privacy_engine = PrivacyEngine()
@@ -148,8 +142,36 @@ def evaluate_model(model, dataloader, device):
             count += len(inputs)
     return total_error / count if count != 0 else 0
 
- 
+def get_model_size(model):
+    """Calculates the file size of the model's state dictionary, providing an estimate of its memory footprint."""
+    torch.save(model.state_dict(), 'temp_model.pt')
+    model_size = os.path.getsize('temp_model.pt') / (1024 * 1024)
+    os.remove('temp_model.pt')
+    return model_size
 
+def benchmark_model(model, dataloader, device):
+    """Measures the time it takes for the model to process the entire test dataset."""
+    start_time = time.time()
+    for inputs, _ in dataloader:
+        inputs = inputs.to(device)
+        with torch.no_grad():
+            _ = model(inputs)
+    end_time = time.time()
+    lookup_time_ns = (end_time - start_time) / len(dataloader.dataset) * 1e9
+    return lookup_time_ns
+
+def timeit(func):
+    """Decorator to measure the execution time of functions."""
+    def timed(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"Execution time: {execution_time:.2f} seconds")
+        return result
+    return timed
+
+@timeit
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Available GPU: ", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU available")
@@ -158,7 +180,7 @@ def main():
     sigma = 0.7
     max_key = 100000
     num_models = 5
-    config = {'0': 500, '1': 550, '2': 500}
+    config = {'0': 1200, '1': 1250, '2': 1200}
 
     data = generate_log_normal_integer_data(data_size, mu, sigma, max_key)
     keys = normalize_data(data)
@@ -178,6 +200,18 @@ def main():
         train_model(model, train_loader, device, test_loader, epochs=50)
         average_error = evaluate_model(model, test_loader, device)
         print(f"Model {i+1} Average Prediction Error on Test Data: {average_error:.4f}")
+
+    errors = [evaluate_model(m, test_loader, device) for m in models]
+    average_error = sum(errors) / len(errors)
+    print(f"Average Prediction Error of Ensemble on Test Data: {average_error:.4f}")
+    
+    model_sizes = [get_model_size(model) for model in models]
+    lookup_times = [benchmark_model(model, test_loader, device) for model in models]
+
+    print(f"Config: {config}")
+    print(f"Average Size of Models (MB): {np.mean(model_sizes):.2f}")
+    print(f"Average Lookup Time (ns): {np.mean(lookup_times):.2f}")
+
 
 if __name__ == '__main__':
     main()
